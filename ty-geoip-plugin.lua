@@ -70,18 +70,27 @@ end
 local function query_geoip(remote_addr ,conf)
     local http = require("resty.http").new()
     local cjson = require("cjson")
-    local res, err = http:request_uri(conf.uri .. remote_addr)
     local country_code
-    if res.status == 200 then
-        if cjson.decode(res.body)["country"]["iso_code"] == nil then
-            country_code = "XX"
+    http:set_timeout(100)
+    local res, err = http:request_uri(conf.uri .. remote_addr)
+    if not err then
+        if res.status == 200 then
+            if cjson.decode(res.body)["country"]["iso_code"] == nil then
+                country_code = "XX"
+            else
+                country_code = cjson.decode(res.body)["country"]["iso_code"]
+            end
         else
-            country_code = cjson.decode(res.body)["country"]["iso_code"]
+            country_code = "XX"
         end
     else
         country_code = "XX"
     end
-    return country_code
+    if country_code == "XX" then
+        return country_code,nil,-1
+    else
+        return country_code
+    end
 end
 
 function _M.rewrite(conf, ctx)
