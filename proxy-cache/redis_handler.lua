@@ -42,6 +42,10 @@ local CACHE_VERSION = 1
 
 local _M = {}
 
+local function is_present(str)
+    return str and str ~= "" and str ~= null
+end
+
 -- http://www.w3.org/Protocols/rfc2616/rfc2616-sec13.html#sec13.5.1
 -- note content-length & apisix-cache-status are not strictly
 -- hop-by-hop but we will be adjusting it here anyhow
