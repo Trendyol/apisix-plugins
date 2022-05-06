@@ -18,7 +18,6 @@
 local memory_handler = require("apisix.plugins.proxy-cache.memory_handler")
 local disk_handler = require("apisix.plugins.proxy-cache.disk_handler")
 local redis_handler = require("apisix.plugins.proxy-cache.redis_handler")
---local rediscluster_handler = require("apisix.plugins.proxy-cache.rediscluster_handler")
 local util = require("apisix.plugins.proxy-cache.util")
 local core = require("apisix.core")
 local ipairs = ipairs
@@ -28,7 +27,6 @@ local plugin_name = "proxy-cache"
 local STRATEGY_DISK = "disk"
 local STRATEGY_MEMORY = "memory"
 local STRATEGY_REDIS = "redis"
-local STRATEGY_REDISCLUSTER = "rediscluster"
 
 
 local policy_to_additional_properties = {
@@ -51,28 +49,7 @@ local policy_to_additional_properties = {
             },
         },
        required = {"redis_host"},
-    },
-    rediscluster = {
-        properties = {
-            redis_cluster_nodes = {
-                type = "array",
-                minItems = 2,
-                items = {
-                    type = "string", minLength = 2, maxLength = 100
-                },
-            },
-            redis_password = {
-                type = "string", minLength = 0,
-            },
-            redis_timeout = {
-                type = "integer", minimum = 1, default = 1000,
-            },
-            redis_cluster_name = {
-                type = "string",
-            },
-        },
-        required = {"redis_cluster_nodes", "redis_cluster_name"},
-    },
+    }
 }
 
 local schema = {
@@ -86,7 +63,7 @@ local schema = {
         },
         cache_strategy = {
             type = "string",
-            enum = {STRATEGY_DISK, STRATEGY_MEMORY, STRATEGY_REDIS, STRATEGY_REDISCLUSTER},
+            enum = {STRATEGY_DISK, STRATEGY_MEMORY, STRATEGY_REDIS},
             default = STRATEGY_DISK,
         },
         cache_key = {
@@ -160,16 +137,6 @@ local schema = {
         },
     },
     ["then"] = policy_to_additional_properties.redis,
-    ["else"] = {
-        ["if"] = {
-            properties = {
-                cache_strategy = {
-                    enum = {"rediscluster"},
-                },
-            },
-        },
-        ["then"] = policy_to_additional_properties["rediscluster"],
-    }
 }
 
 
@@ -225,8 +192,6 @@ function _M.access(conf, ctx)
         handler = disk_handler
     elseif conf.cache_strategy == STRATEGY_REDIS then
         handler = redis_handler
-    else
-        handler = rediscluster_handler
     end
 
     return handler.access(conf, ctx)
@@ -243,8 +208,6 @@ function _M.header_filter(conf, ctx)
         handler = disk_handler
     elseif conf.cache_strategy == STRATEGY_REDIS then
         handler = redis_handler
-    else
-        handler = rediscluster_handler
     end
 
     handler.header_filter(conf, ctx)
@@ -261,6 +224,4 @@ function _M.body_filter(conf, ctx)
     end
 end
 
-
 return _M
-

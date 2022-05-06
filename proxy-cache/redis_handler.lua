@@ -15,6 +15,7 @@
 -- limitations under the License.
 --
 
+local ngx = ngx
 local util = require("apisix.plugins.proxy-cache.util")
 local core = require("apisix.core")
 local tab_new = require("table.new")
@@ -23,6 +24,7 @@ local ngx_re_match = ngx.re.match
 local parse_http_time = ngx.parse_http_time
 local concat = table.concat
 local lower = string.lower
+local find = string.find
 local floor = math.floor
 local tostring = tostring
 local tonumber = tonumber
@@ -31,19 +33,15 @@ local type = type
 local pairs = pairs
 local time = ngx.now
 local max = math.max
-
-local ngx_shared = ngx.shared
-local setmetatable = setmetatable
 local redis_new = require("resty.redis").new
 local red = redis_new()
-local timeout = 1000  
-
+local memory_cache = ngx.shared.memory_cache
 local CACHE_VERSION = 1
 
 local _M = {}
 
 local function is_present(str)
-    return str and str ~= "" and str ~= null
+    return str and str ~= "" and str ~= nil
 end
 
 -- http://www.w3.org/Protocols/rfc2616/rfc2616-sec13.html#sec13.5.1
@@ -125,7 +123,6 @@ end
 
 local function parse_resource_ttl(ctx, cc)
     local max_age = cc["s-maxage"] or cc["max-age"]
-    
     if not max_age then
         local expires = ctx.var.upstream_http_expires
 
@@ -195,13 +192,14 @@ local function redisConn(opts)
     local redis_opts = {}
     -- use a special pool name only if database is set to non-zero
     -- otherwise use the default pool name host:port
-    redis_opts.pool = opts.redis_database and opts.redis_host .. ":" .. opts.redis_port .. ":" .. opts.redis_database
+    redis_opts.pool = opts.redis_database and opts.redis_host .. ":" .. opts.redis_port .. ":"
+                                                                .. opts.redis_database
 
     red:set_timeout(opts.redis_timeout)
 
     -- conecto
     local ok, err = red:connect(opts.redis_host, opts.redis_port, redis_opts)
-    if not ok and not string.find(err, "connected") then
+    if not ok and not find(err, "connected") then
         core.log.warn("failed to connect to Redis: ", err)
         return nil, err
     end
@@ -259,14 +257,22 @@ function _M.access(conf, ctx)
         return
     end
 
-    local res, err = red:get(ctx.var.upstream_cache_key)
-    if err then
-        core.log.warn("failed to get cache key: ", err)
-        return
+    local res, err = memory_cache:get(ctx.var.upstream_cache_key)
+    if not res or err then
+        res, err = red:get(ctx.var.upstream_cache_key)
+        if err then
+            core.log.warn("failed to get cache key: ", err)
+            return
+        end
+        local obj_json = core.json.encode(res)
+        if not obj_json then
+            return nil, "could not encode object"
+        end
+        memory_cache:set(ctx.var.upstream_cache_key, obj_json, 5)
     end
+
     if not res then
         if not err then
-            core.log.warn("cache not found")
             return
         else
             return
@@ -398,8 +404,9 @@ function _M.body_filter(conf, ctx)
     end
 
     local succ, err = red:set(ctx.var.upstream_cache_key, obj_json, "EX", res.ttl)
+    memory_cache:set(ctx.var.upstream_cache_key, obj_json, 5)
+
     return succ, err
 end
-
 
 return _M
