@@ -2,7 +2,7 @@ local ngx = ngx
 local core = require("apisix.core")
 local plugin = require("apisix.plugin")
 local upstream = require("apisix.upstream")
-local mlcache = require "resty.mlcache"
+local mlcache = require("resty.mlcache")
 
 local schema = {
     type = "object",
