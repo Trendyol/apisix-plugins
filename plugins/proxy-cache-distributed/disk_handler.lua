@@ -18,7 +18,7 @@
 local os = os
 local ngx_re = require("ngx.re")
 local core = require("apisix.core")
-local util = require("apisix.plugins.proxy-cache.util")
+local util = require("apisix.plugins.proxy-cache-distributed.util")
 
 local _M = {}
 
@@ -53,7 +53,7 @@ function _M.access(conf, ctx)
     if conf.cache_bypass ~= nil then
         local value = util.generate_complex_value(conf.cache_bypass, ctx)
         ctx.var.upstream_cache_bypass = value
-        core.log.info("proxy-cache cache bypass value:", value)
+        core.log.info("proxy-cache-distributed cache bypass value:", value)
     end
 end
 
@@ -67,7 +67,7 @@ function _M.header_filter(conf, ctx)
 
     if conf.no_cache ~= nil then
         local value = util.generate_complex_value(conf.no_cache, ctx)
-        core.log.info("proxy-cache no-cache value:", value)
+        core.log.info("proxy-cache-distributed no-cache value:", value)
 
         if value ~= nil and value ~= "" and value ~= "0" then
             no_cache = "1"
@@ -90,7 +90,7 @@ function _M.header_filter(conf, ctx)
         "Apisix-Cache-Status", ctx.var.upstream_cache_status)
 
     ctx.var.upstream_no_cache = no_cache
-    core.log.info("proxy-cache no cache:", no_cache)
+    core.log.info("proxy-cache-distributed no cache:", no_cache)
 end
 
 

@@ -1,11 +1,11 @@
-local memory_handler = require("apisix.plugins.proxy-cache.memory_handler")
-local disk_handler = require("apisix.plugins.proxy-cache.disk_handler")
-local redis_handler = require("apisix.plugins.proxy-cache.redis_handler")
-local util = require("apisix.plugins.proxy-cache.util")
+local memory_handler = require("apisix.plugins.proxy-cache-distributed.memory_handler")
+local disk_handler = require("apisix.plugins.proxy-cache-distributed.disk_handler")
+local redis_handler = require("apisix.plugins.proxy-cache-distributed.redis_handler")
+local util = require("apisix.plugins.proxy-cache-distributed.util")
 local core = require("apisix.core")
 local ipairs = ipairs
 
-local plugin_name = "proxy-cache"
+local plugin_name = "proxy-cache-distributed"
 
 local STRATEGY_DISK = "disk"
 local STRATEGY_MEMORY = "memory"
@@ -162,11 +162,11 @@ end
 
 
 function _M.access(conf, ctx)
-    core.log.info("proxy-cache plugin access phase, conf: ", core.json.delay_encode(conf))
+    core.log.info("proxy-cache-distributed plugin access phase, conf: ", core.json.delay_encode(conf))
 
     local value = util.generate_complex_value(conf.cache_key, ctx)
     ctx.var.upstream_cache_key = value
-    core.log.info("proxy-cache cache key value:", value)
+    core.log.info("proxy-cache-distributed cache key value:", value)
 
     local handler
     if conf.cache_strategy == STRATEGY_MEMORY then
@@ -182,7 +182,7 @@ end
 
 
 function _M.header_filter(conf, ctx)
-    core.log.info("proxy-cache plugin header filter phase, conf: ", core.json.delay_encode(conf))
+    core.log.info("proxy-cache-distributed plugin header filter phase, conf: ", core.json.delay_encode(conf))
 
     local handler
     if conf.cache_strategy == STRATEGY_MEMORY then
@@ -198,7 +198,7 @@ end
 
 
 function _M.body_filter(conf, ctx)
-    core.log.info("proxy-cache plugin body filter phase, conf: ", core.json.delay_encode(conf))
+    core.log.info("proxy-cache-distributed plugin body filter phase, conf: ", core.json.delay_encode(conf))
 
     if conf.cache_strategy == STRATEGY_MEMORY then
         memory_handler.body_filter(conf, ctx)

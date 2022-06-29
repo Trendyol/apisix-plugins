@@ -15,9 +15,9 @@ local tmp = {}
 function _M.generate_complex_value(data, ctx)
     core.table.clear(tmp)
 
-    core.log.info("proxy-cache complex value: ", core.json.delay_encode(data))
+    core.log.info("proxy-cache-distributed complex value: ", core.json.delay_encode(data))
     for i, value in ipairs(data) do
-        core.log.info("proxy-cache complex value index-", i, ": ", value)
+        core.log.info("proxy-cache-distributed complex value index-", i, ": ", value)
 
         if string.byte(value, 1, 1) == string.byte('$') then
             tmp[i] = ctx.var[string.sub(value, 2)]

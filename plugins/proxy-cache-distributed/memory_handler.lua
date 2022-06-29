@@ -1,5 +1,5 @@
-local ngx = ngx
-local util = require("apisix.plugins.proxy-cache.util")
+local memory_strategy = require("apisix.plugins.proxy-cache-distributed.memory").new
+local util = require("apisix.plugins.proxy-cache-distributed.util")
 local core = require("apisix.core")
 local tab_new = require("table.new")
 local ngx_re_gmatch = ngx.re.gmatch
@@ -7,7 +7,6 @@ local ngx_re_match = ngx.re.match
 local parse_http_time = ngx.parse_http_time
 local concat = table.concat
 local lower = string.lower
-local find = string.find
 local floor = math.floor
 local tostring = tostring
 local tonumber = tonumber
@@ -16,16 +15,10 @@ local type = type
 local pairs = pairs
 local time = ngx.now
 local max = math.max
-local redis_new = require("resty.redis").new
-local red = redis_new()
-local memory_cache = ngx.shared.memory_cache
+
 local CACHE_VERSION = 1
 
 local _M = {}
-
-local function is_present(str)
-    return str and str ~= "" and str ~= nil
-end
 
 -- http://www.w3.org/Protocols/rfc2616/rfc2616-sec13.html#sec13.5.1
 -- note content-length & apisix-cache-status are not strictly
@@ -106,6 +99,7 @@ end
 
 local function parse_resource_ttl(ctx, cc)
     local max_age = cc["s-maxage"] or cc["max-age"]
+
     if not max_age then
         local expires = ctx.var.upstream_http_expires
 
@@ -131,7 +125,7 @@ local function cacheable_request(conf, ctx, cc)
 
     if conf.cache_bypass ~= nil then
         local value = util.generate_complex_value(conf.cache_bypass, ctx)
-        core.log.info("proxy-cache cache bypass value:", value)
+        core.log.info("proxy-cache-distributed cache bypass value:", value)
         if value ~= nil and value ~= "" and value ~= "0" then
             return false, "BYPASS"
         end
@@ -152,7 +146,7 @@ local function cacheable_response(conf, ctx, cc)
 
     if conf.no_cache ~= nil then
         local value = util.generate_complex_value(conf.no_cache, ctx)
-        core.log.info("proxy-cache no-cache value:", value)
+        core.log.info("proxy-cache-distributed no-cache value:", value)
 
         if value ~= nil and value ~= "" and value ~= "0" then
             return false
@@ -171,51 +165,6 @@ local function cacheable_response(conf, ctx, cc)
 end
 
 
-local function redisConn(opts)
-    local redis_opts = {}
-    -- use a special pool name only if database is set to non-zero
-    -- otherwise use the default pool name host:port
-    redis_opts.pool = opts.redis_database and opts.redis_host .. ":" .. opts.redis_port .. ":"
-                                                                .. opts.redis_database
-
-    red:set_timeout(opts.redis_timeout)
-
-    -- conecto
-    local ok, err = red:connect(opts.redis_host, opts.redis_port, redis_opts)
-    if not ok and not find(err, "connected") then
-        core.log.warn("failed to connect to Redis: ", err)
-        return nil, err
-    end
-
-    local times, err2 = red:get_reused_times()
-    if err2 then
-        core.log.warn("failed to get connect reused times: ", err2)
-        return nil, err
-    end
-
-    if times == 1 then
-        if is_present(opts.redis_password) then
-            local ok3, err3 = red:auth(opts.redis_password)
-            if not ok3 then
-                core.log.warn("failed to auth Redis: ", err3)
-                return nil, err
-            end
-        end
-
-        if opts.redis_database ~= 0 then
-            -- Only call select first time, since we know the connection is shared
-            -- between instances that use the same redis database
-            local ok4, err4 = red:select(opts.redis_database)
-            if not ok4 then
-                core.log.warn("failed to change Redis database: ", err4)
-                return nil, err
-            end
-        end
-    end
-    return red
-end
-
-
 function _M.access(conf, ctx)
     local cc = parse_directive_header(ctx.var.http_cache_control)
 
@@ -229,52 +178,25 @@ function _M.access(conf, ctx)
 
     if not ctx.cache then
         ctx.cache = {
+            memory = memory_strategy({shdict_name = conf.cache_zone}),
             hit = false,
             ttl = 0,
         }
     end
 
-    local red, err = redisConn(conf)
-    if not red then
-        core.log.warn("failed to connect to redis: ", err)
-        return
-    end
-
-    local res, err = memory_cache:get(ctx.var.upstream_cache_key)
-    if not res or err then
-        res, err = red:get(ctx.var.upstream_cache_key)
-        if err then
-            core.log.warn("failed to get cache key: ", err)
-            return
-        end
-        local obj_json = core.json.encode(res)
-        if not obj_json then
-            return nil, "could not encode object"
-        end
-        memory_cache:set(ctx.var.upstream_cache_key, obj_json, 5)
-    end
-
-    if not res then
-        if not err then
-            return
-        else
-            return
-        end
-    end
-    local res, err = core.json.decode(res)
+    local res, err = ctx.cache.memory:get(ctx.var.upstream_cache_key)
 
     if ctx.var.request_method == "PURGE" then
         if err == "not found" then
             return 404
         end
-        red:del(ctx.var.upstream_cache_key)
+        ctx.cache.memory:purge(ctx.var.upstream_cache_key)
         ctx.cache = nil
         return 200
     end
 
     if err then
         core.response.set_header("Apisix-Cache-Status", "MISS")
-
         if err ~= "not found" then
             core.log.error("failed to get from cache, err: ", err)
         elseif conf.cache_control and cc["only-if-cached"] then
@@ -286,7 +208,7 @@ function _M.access(conf, ctx)
     if res.version ~= CACHE_VERSION then
         core.log.warn("cache format mismatch, purging ", ctx.var.upstream_cache_key)
         core.response.set_header("Apisix-Cache-Status", "BYPASS")
-        red:purge(ctx.var.upstream_cache_key)
+        ctx.cache.memory:purge(ctx.var.upstream_cache_key)
         return
     end
 
@@ -375,21 +297,11 @@ function _M.body_filter(conf, ctx)
         version   = CACHE_VERSION,
     }
 
-    local red, err = redisConn(conf)
-    if not red then
-        core.log.warn("failed to connect to redis: ", err)
-        return
+    local res, err = cache.memory:set(ctx.var.upstream_cache_key, res, cache.ttl)
+    if not res then
+        core.log.error("failed to set cache, err: ", err)
     end
-
-    local obj_json = core.json.encode(res)
-    if not obj_json then
-        return nil, "could not encode object"
-    end
-
-    local succ, err = red:set(ctx.var.upstream_cache_key, obj_json, "EX", res.ttl)
-    memory_cache:set(ctx.var.upstream_cache_key, obj_json, 5)
-
-    return succ, err
 end
+
 
 return _M
