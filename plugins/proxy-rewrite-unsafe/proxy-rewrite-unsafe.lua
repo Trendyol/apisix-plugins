@@ -195,10 +195,12 @@ function _M.rewrite(conf, ctx)
     end
 
     if ctx.var.is_args == "?" then
-        if index then
-            ctx.var.upstream_uri = upstream_uri .. "&" .. (ctx.var.args or "")
-        else
-            ctx.var.upstream_uri = upstream_uri .. "?" .. (ctx.var.args or "")
+        if not conf.use_real_request_uri_unsafe then
+            if index then
+                ctx.var.upstream_uri = upstream_uri .. "&" .. (ctx.var.args or "")
+            else
+                ctx.var.upstream_uri = upstream_uri .. "?" .. (ctx.var.args or "")
+            end
         end
     else
         ctx.var.upstream_uri = upstream_uri
