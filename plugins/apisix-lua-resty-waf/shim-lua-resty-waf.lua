@@ -16,7 +16,7 @@ local schema = {
     properties = {
         mode = {
             type = "string",
-            enum    = {"SIMULATE", "ACTIVE", "INACTIVE"}
+            enum    = {"SIMULATE", "ACTIVE", "INACTIVE"},
             default = "INACTIVE"
         },
         client_score_threshold = {
@@ -25,7 +25,7 @@ local schema = {
         },
         debug_log_level = {
             type = "string",
-            enum    = {"info", "warn", "error", "debug"}
+            enum    = {"info", "warn", "error", "debug"},
             default = "info"
         },
         debug_enabled = {
