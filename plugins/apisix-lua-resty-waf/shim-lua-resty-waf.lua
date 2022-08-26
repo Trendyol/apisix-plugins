@@ -16,7 +16,8 @@ local schema = {
     properties = {
         mode = {
             type = "string",
-            default = "SIMULATE"
+            enum    = {"SIMULATE", "ACTIVE", "INACTIVE"}
+            default = "INACTIVE"
         },
         client_score_threshold = {
             type = "integer",
@@ -24,18 +25,27 @@ local schema = {
         },
         debug_log_level = {
             type = "string",
+            enum    = {"info", "warn", "error", "debug"}
             default = "info"
         },
         debug_enabled = {
             type = "boolean",
             default = false
-        }
+        },
+        extra_rules = {
+            type = "array",
+            minItems = 1,
+            items = {
+                description = "rule name, like 8000_demo_rule",
+                type = "string",
+            }
+        },
     }
 }
 
 
 local _M = {
-    version = 0.5,
+    version = 0.7,
     priority = -9900,
     name = plugin_name,
     schema = schema,
@@ -43,7 +53,12 @@ local _M = {
 
 
 function _M.check_schema(conf, schema_type)
-    return core.schema.check(schema, conf)
+    local ok, err = core.schema.check(schema, conf)
+    if not ok then
+        return false, err
+    end
+    
+    return true
 end
 
 
@@ -60,15 +75,13 @@ function _M.access(conf, ctx)
     waf:set_option("mode", conf.mode)
     waf:set_option("debug_log_level", log_levels[conf.debug_log_level])
     waf:set_option("score_threshold", conf.client_score_threshold)
-    waf:set_option("info", "true")
     waf:set_option("event_log_periodic_flush",30)
     waf:set_option("event_log_buffer_size", 128)
     waf:set_option("event_log_ngx_vars", "request_id")
     waf:set_option("event_log_ngx_vars", "server_port")
     waf:set_option("event_log_request_arguments", true)
     waf:set_option("allow_unknown_content_types", true)
-    waf:set_option("event_log_target", "file")
-    waf:set_option("event_log_target_path", "/tmp/waf.log")
+    waf:set_option("event_log_target", "error")
     waf:set_option("process_multipart_body", true)
     waf:set_option("res_body_max_size", 1024 * 1024 * 2)
     waf:set_option("req_tid_header", false)
@@ -86,6 +99,12 @@ function _M.access(conf, ctx)
         "application/x-httpd-php",
         "application/x-httpd-php-source",
     })
+
+    if conf.extra_rules and #conf.extra_rules > 0 then
+        for _, extra_rule_name in pairs(conf.extra_rules) do
+            waf:set_option("add_ruleset", extra_rule_name)
+        end
+    end
 
     local status, obj = waf:exec()
     return status, obj
