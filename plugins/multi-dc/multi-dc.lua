@@ -160,6 +160,7 @@ function _M.access(conf, ctx)
     end
     target_upstream.pass_host = "rewrite"
     target_upstream.upstream_host = newhost
+    ctx.var.upstream_scheme = "https"
     return set_upstream(target_upstream, ctx)
 end
 
