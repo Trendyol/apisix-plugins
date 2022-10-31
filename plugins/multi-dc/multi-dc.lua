@@ -1,3 +1,4 @@
+local ngx_re = require "ngx.re"
 local core      = require("apisix.core")
 local upstream  = require("apisix.upstream")
 local re_sub    = ngx.re.sub
@@ -113,10 +114,10 @@ function _M.access(conf, ctx)
         table.insert(segment, str[1])
     end
 
-    first_segment_arr = ngx_re.split(segment[1],"-")
-    target_dci = first_segment_arr[#first_segment_arr]
-    service_name = segment[1]:gsub("-" .. target_dci, '')
-    target_dc = re_sub(target_dci, "^(.*)dci", "$1")
+    local first_segment_arr = ngx_re.split(segment[1],"-")
+    local target_dci = first_segment_arr[#first_segment_arr]
+    local service_name = segment[1]:gsub("-" .. target_dci, '')
+    local target_dc = re_sub(target_dci, "^(.*)dci", "$1")
     -- check target
     if not segment[1] or not segment[2] then
         return 503, {error_msg = "incorrect target syntax"}
@@ -125,7 +126,7 @@ function _M.access(conf, ctx)
     -- remove "-dci" suffix
     core.log.debug("try to access external service, data center: ",target_dc,
                     ", service: " .. service_name)
-    newhost = service_name .. "." .. target_dc .. "." .. segment[3] .. "." .. segment[4]
+    local newhost = service_name .. "." .. target_dc .. "." .. segment[3] .. "." .. segment[4]
     -- find target upstream
     local target_upstream_id, target_upstream_source
     local target_data_center = conf.data_centers[target_dc]
@@ -157,8 +158,11 @@ function _M.access(conf, ctx)
         core.log.warn("target upstream not exist: ", target_upstream_id)
         return 503, {error_msg = "target upstream not exist"}
     end
-    target_upstream.pass_host = "rewrite"
-    target_upstream.upstream_host = newhost
+    -- target_upstream.pass_host = "rewrite"
+    -- target_upstream.upstream_host = newhost
+    ctx.var.upstream_scheme = "https"
+    ctx.var.upstream_host = newhost
+    ctx.var.pass_host = "rewrite"
     return set_upstream(target_upstream, ctx)
 end
 
