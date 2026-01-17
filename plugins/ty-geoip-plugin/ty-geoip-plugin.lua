@@ -7,10 +7,10 @@ local mlcache = require("resty.mlcache")
 local schema = {
     type = "object",
     properties = {
-        uri = {type = "string"},
-        srcip_header = {type = "string" },
+        uri = { type = "string" },
+        srcip_header = { type = "string" },
     },
-    required = {"uri"},
+    required = { "uri" },
 }
 
 local plugin_name = "ty-geoip-plugin"
@@ -29,7 +29,7 @@ local _M = {
 
 local cache, err = mlcache.new("geoip_cache", "geoip_cache_shared_dict", {
     lru_size = 1000, -- hold up to 1000 items in the L1 cache (Lua VM)
-    ttl      = 60, -- caches scalar types and tables for 1m
+    ttl      = 60,   -- caches scalar types and tables for 1m
 })
 if not cache then
     error("could not create mlcache: " .. err)
@@ -47,31 +47,27 @@ function _M.init()
     end
 end
 
-
 function _M.destroy()
     -- call this function when plugin is unloaded
 end
-local function query_geoip(remote_addr ,conf)
+
+local function query_geoip(remote_addr, conf)
     local http = require("resty.http").new()
     local cjson = require("cjson")
-    local country_code
+    local country_code = "XX"
     http:set_timeout(100)
     local res, err = http:request_uri(conf.uri .. remote_addr)
-    if not err then
-        if res.status == 200 then
-            if cjson.decode(res.body)["country"]["iso_code"] == nil then
-                country_code = "XX"
-            else
-                country_code = cjson.decode(res.body)["country"]["iso_code"]
-            end
+    if not err and res.status == 200 then
+        local ok, data = pcall(cjson.decode, res.body)
+        if ok and data and data.country and data.country.iso_code then
+            country_code = data.country.iso_code
         else
-            country_code = "XX"
+            core.log.error("failed to decode geoip response or missing iso_code: ", res.body)
         end
-    else
-        country_code = "XX"
     end
+
     if country_code == "XX" then
-        return country_code,nil,-1
+        return country_code, nil, -1
     else
         return country_code
     end
@@ -83,7 +79,8 @@ function _M.rewrite(conf, ctx)
         remote_addr = core.request.header(ctx, conf.srcip_header)
     end
     if remote_addr == nil then
-        core.log.error(plugin_name, " Param ".. conf.srcip_header .. " not found in request header. Failing back to original source IP ")
+        core.log.error(plugin_name,
+            " Param " .. conf.srcip_header .. " not found in request header. Failing back to original source IP ")
         remote_addr = ctx.var.remote_addr
     end
 
@@ -91,6 +88,5 @@ function _M.rewrite(conf, ctx)
     core.log.debug(plugin_name, " cache_hit_level: ", hit_level)
     core.request.set_header(ctx, "TY-country", country_code)
 end
-
 
 return _M
