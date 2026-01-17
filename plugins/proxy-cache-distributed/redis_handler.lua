@@ -11,13 +11,11 @@ local find = string.find
 local floor = math.floor
 local tostring = tostring
 local tonumber = tonumber
-local ngx = ngx
 local type = type
 local pairs = pairs
 local time = ngx.now
 local max = math.max
 local redis_new = require("resty.redis").new
-local red = redis_new()
 local memory_cache = ngx.shared.memory_cache
 local CACHE_VERSION = 1
 
@@ -58,7 +56,7 @@ local function overwritable_header(header)
     local n_header = lower(header)
 
     return not hop_by_hop_headers[n_header]
-            and not ngx_re_match(n_header, "ratelimit-remaining")
+        and not ngx_re_match(n_header, "ratelimit-remaining")
 end
 
 
@@ -80,22 +78,31 @@ local function parse_directive_header(h)
         h = concat(h, ", ")
     end
 
-    local t    = {}
-    local res  = tab_new(3, 0)
-    local iter = ngx_re_gmatch(h, "([^,]+)", "oj")
+    local t         = {}
+    local res       = tab_new(3, 0)
+    local iter, err = ngx_re_gmatch(h, "([^,]+)", "oj")
+
+    if not iter then
+        if err then
+            core.log.error("failed to gmatch: ", err)
+        end
+        return t
+    end
 
     local m = iter()
     while m do
-        local _, err = ngx_re_match(m[0], [[^\s*([^=]+)(?:=(.+))?]],
+        local matched, err = ngx_re_match(m[0], [[^\s*([^=]+)(?:=(.+))?]],
             "oj", nil, res)
         if err then
             core.log.error(err)
         end
 
-        -- store the directive token as a numeric value if it looks like a number;
-        -- otherwise, store the string value. for directives without token, we just
-        -- set the key to true
-        t[lower(res[1])] = tonumber(res[2]) or res[2] or true
+        if matched then
+            -- store the directive token as a numeric value if it looks like a number;
+            -- otherwise, store the string value. for directives without token, we just
+            -- set the key to true
+            t[lower(res[1])] = tonumber(res[2]) or res[2] or true
+        end
 
         m = iter()
     end
@@ -172,11 +179,12 @@ end
 
 
 local function redisConn(opts)
+    local red = redis_new()
     local redis_opts = {}
     -- use a special pool name only if database is set to non-zero
     -- otherwise use the default pool name host:port
     redis_opts.pool = opts.redis_database and opts.redis_host .. ":" .. opts.redis_port .. ":"
-                                                                .. opts.redis_database
+        .. opts.redis_database
 
     red:set_timeout(opts.redis_timeout)
 
@@ -193,7 +201,7 @@ local function redisConn(opts)
         return nil, err
     end
 
-    if times == 1 then
+    if times == 0 then
         if is_present(opts.redis_password) then
             local ok3, err3 = red:auth(opts.redis_password)
             if not ok3 then
@@ -213,6 +221,18 @@ local function redisConn(opts)
         end
     end
     return red
+end
+
+
+local function close_redis(red)
+    if not red then
+        return
+    end
+
+    local ok, err = red:set_keepalive(10000, 100)
+    if not ok then
+        core.log.warn("failed to set keepalive: ", err)
+    end
 end
 
 
@@ -245,10 +265,12 @@ function _M.access(conf, ctx)
         res, err = red:get(ctx.var.upstream_cache_key)
         if err then
             core.log.warn("failed to get cache key: ", err)
+            close_redis(red)
             return
         end
         local obj_json = core.json.encode(res)
         if not obj_json then
+            close_redis(red)
             return nil, "could not encode object"
         end
         memory_cache:set(ctx.var.upstream_cache_key, obj_json, 5)
@@ -256,8 +278,10 @@ function _M.access(conf, ctx)
 
     if not res then
         if not err then
+            close_redis(red)
             return
         else
+            close_redis(red)
             return
         end
     end
@@ -265,10 +289,12 @@ function _M.access(conf, ctx)
 
     if ctx.var.request_method == "PURGE" then
         if err == "not found" then
+            close_redis(red)
             return 404
         end
         red:del(ctx.var.upstream_cache_key)
         ctx.cache = nil
+        close_redis(red)
         return 200
     end
 
@@ -278,8 +304,10 @@ function _M.access(conf, ctx)
         if err ~= "not found" then
             core.log.error("failed to get from cache, err: ", err)
         elseif conf.cache_control and cc["only-if-cached"] then
+            close_redis(red)
             return 504
         end
+        close_redis(red)
         return
     end
 
@@ -287,27 +315,32 @@ function _M.access(conf, ctx)
         core.log.warn("cache format mismatch, purging ", ctx.var.upstream_cache_key)
         core.response.set_header("Apisix-Cache-Status", "BYPASS")
         red:purge(ctx.var.upstream_cache_key)
+        close_redis(red)
         return
     end
 
     if conf.cache_control then
         if cc["max-age"] and time() - res.timestamp > cc["max-age"] then
             core.response.set_header("Apisix-Cache-Status", "STALE")
+            close_redis(red)
             return
         end
 
         if cc["max-stale"] and time() - res.timestamp - res.ttl > cc["max-stale"] then
             core.response.set_header("Apisix-Cache-Status", "STALE")
+            close_redis(red)
             return
         end
 
         if cc["min-fresh"] and res.ttl - (time() - res.timestamp) < cc["min-fresh"] then
             core.response.set_header("Apisix-Cache-Status", "STALE")
+            close_redis(red)
             return
         end
     else
         if time() - res.timestamp > res.ttl then
             core.response.set_header("Apisix-Cache-Status", "STALE")
+            close_redis(red)
             return
         end
     end
@@ -325,9 +358,9 @@ function _M.access(conf, ctx)
     core.response.set_header("Age", floor(time() - res.timestamp))
     core.response.set_header("Apisix-Cache-Status", "HIT")
 
+    close_redis(red)
     return res.status, res.body
 end
-
 
 function _M.header_filter(conf, ctx)
     local cache = ctx.cache
@@ -352,7 +385,6 @@ function _M.header_filter(conf, ctx)
         ctx.cache = nil
     end
 end
-
 
 function _M.body_filter(conf, ctx)
     local cache = ctx.cache
@@ -383,12 +415,14 @@ function _M.body_filter(conf, ctx)
 
     local obj_json = core.json.encode(res)
     if not obj_json then
+        close_redis(red)
         return nil, "could not encode object"
     end
 
     local succ, err = red:set(ctx.var.upstream_cache_key, obj_json, "EX", res.ttl)
     memory_cache:set(ctx.var.upstream_cache_key, obj_json, 5)
 
+    close_redis(red)
     return succ, err
 end
 

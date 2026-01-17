@@ -51,7 +51,7 @@ local function overwritable_header(header)
     local n_header = lower(header)
 
     return not hop_by_hop_headers[n_header]
-            and not ngx_re_match(n_header, "ratelimit-remaining")
+        and not ngx_re_match(n_header, "ratelimit-remaining")
 end
 
 
@@ -73,22 +73,31 @@ local function parse_directive_header(h)
         h = concat(h, ", ")
     end
 
-    local t    = {}
-    local res  = tab_new(3, 0)
-    local iter = ngx_re_gmatch(h, "([^,]+)", "oj")
+    local t         = {}
+    local res       = tab_new(3, 0)
+    local iter, err = ngx_re_gmatch(h, "([^,]+)", "oj")
+
+    if not iter then
+        if err then
+            core.log.error("failed to gmatch: ", err)
+        end
+        return t
+    end
 
     local m = iter()
     while m do
-        local _, err = ngx_re_match(m[0], [[^\s*([^=]+)(?:=(.+))?]],
+        local matched, err = ngx_re_match(m[0], [[^\s*([^=]+)(?:=(.+))?]],
             "oj", nil, res)
         if err then
             core.log.error(err)
         end
 
-        -- store the directive token as a numeric value if it looks like a number;
-        -- otherwise, store the string value. for directives without token, we just
-        -- set the key to true
-        t[lower(res[1])] = tonumber(res[2]) or res[2] or true
+        if matched then
+            -- store the directive token as a numeric value if it looks like a number;
+            -- otherwise, store the string value. for directives without token, we just
+            -- set the key to true
+            t[lower(res[1])] = tonumber(res[2]) or res[2] or true
+        end
 
         m = iter()
     end
@@ -178,7 +187,7 @@ function _M.access(conf, ctx)
 
     if not ctx.cache then
         ctx.cache = {
-            memory = memory_strategy({shdict_name = conf.cache_zone}),
+            memory = memory_strategy({ shdict_name = conf.cache_zone }),
             hit = false,
             ttl = 0,
         }
@@ -250,7 +259,6 @@ function _M.access(conf, ctx)
     return res.status, res.body
 end
 
-
 function _M.header_filter(conf, ctx)
     local cache = ctx.cache
     if not cache or cache.hit then
@@ -274,7 +282,6 @@ function _M.header_filter(conf, ctx)
         ctx.cache = nil
     end
 end
-
 
 function _M.body_filter(conf, ctx)
     local cache = ctx.cache
@@ -302,6 +309,5 @@ function _M.body_filter(conf, ctx)
         core.log.error("failed to set cache, err: ", err)
     end
 end
-
 
 return _M
